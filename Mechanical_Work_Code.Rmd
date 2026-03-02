@@ -1,0 +1,145 @@
+---
+title: "Mechanical_Work_Code"
+author: "zach"
+date: "2026-03-01"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r Load and Combine Subjects}
+
+library(tidyverse)
+library(lme4)
+library(lmerTest)
+library(emmeans)
+
+# -----------------------------
+# Step 0: Load your combined data
+# -----------------------------
+combined_subject_data_clean <- read_csv("C:/Users/zzegu/Documents/Visual3DExample1/Combined_Subjects/combined_subject_data_clean.csv")
+
+# -----------------------------
+# Step 1: Define transition steps
+# -----------------------------
+transition_steps <- tibble(
+  Subject = 1:20,
+  StartStep = c(26, 21, 25, 24, 29, 28, 34, 28, 25, 26,
+                30, 35, 26, 30, 29, 31, 29, 28, 28, 29),
+  StopStep = c(30, 29, 32, 29, 48, 33, 40, 35, 35, 33,
+               45, 34, 32, 37, 35, 37, 34, 44, 34, 35)
+)
+
+# -----------------------------
+# Step 2: Clean subject labels & join steps
+# -----------------------------
+clean_data <- combined_subject_data_clean %>%
+  mutate(
+    Subject = str_extract(File, "(?i)s\\d+") %>%
+              str_remove_all("(?i)s") %>%
+              as.numeric(),
+    FilePart = case_when(
+      str_detect(File, "_start") ~ "start",
+      str_detect(File, "_stop") ~ "stop",
+      TRUE ~ "unknown"
+    )
+  ) %>%
+  left_join(transition_steps, by = "Subject")
+
+# -----------------------------
+# Step 3: Create Period variable
+# -----------------------------
+clean_data <- clean_data %>%
+  mutate(
+    Period = case_when(
+      FilePart == "start" & Step >= (StartStep - 5) & Step < StartStep ~ "Late Baseline",
+      FilePart == "start" & Step >= StartStep & Step <= (StartStep + 5) ~ "Early Adaptation",
+      FilePart == "stop"  & Step >= (StopStep - 5) & Step < StopStep ~ "Late Adaptation",
+      FilePart == "stop"  & Step >= StopStep & Step <= (StopStep + 5) ~ "Post Adaptation",
+      TRUE ~ NA_character_
+    )
+  ) %>%
+  filter(!is.na(Period)) %>%
+  mutate(Period = factor(Period,
+                         levels = c("Late Baseline",
+                                    "Early Adaptation",
+                                    "Late Adaptation",
+                                    "Post Adaptation")))
+
+# -----------------------------
+# Step 4: Pivot work variables
+# -----------------------------
+work_vars <- c(
+  "L_Ankle_Pos_Work", "L_Ankle_Neg_Work",
+  "R_Ankle_Pos_Work", "R_Ankle_Neg_Work",
+  "L_Knee_Pos_Work", "L_Knee_Neg_Work",
+  "R_Knee_Pos_Work", "R_Knee_Neg_Work",
+  "L_Hip_Pos_Work",  "L_Hip_Neg_Work",
+  "R_Hip_Pos_Work",  "R_Hip_Neg_Work"
+)
+
+data_long <- clean_data %>%
+  pivot_longer(cols = all_of(work_vars), names_to = "Variable", values_to = "Work") %>%
+  group_by(Subject, Period, Variable) %>%
+  summarise(Work = mean(Work, na.rm = TRUE), .groups = "drop")
+
+# -----------------------------
+# Step 5: Run LMM and save results
+# -----------------------------
+results <- list()
+
+for (var in unique(data_long$Variable)) {
+  cat("\n========================================\n")
+  cat("LMM FOR:", var, "\n")
+  cat("========================================\n")
+
+  data_var <- data_long %>% filter(Variable == var)
+
+  model <- lmer(Work ~ Period + (1 | Subject), data = data_var)
+  print(summary(model))
+
+  # Post hoc
+  em <- emmeans(model, pairwise ~ Period, adjust = "holm")
+  print(em$contrasts)
+
+  # Save
+  results[[var]] <- list(model_summary = summary(model),
+                         posthoc = em$contrasts)
+}
+
+# -----------------------------
+# Step 6: Generate line plots with mean ± SEM
+# -----------------------------
+plot_data <- data_long %>%
+  group_by(Variable, Period) %>%
+  summarise(
+    mean_Work = mean(Work),
+    sem_Work  = sd(Work)/sqrt(n()),
+    .groups = "drop"
+  )
+
+ggplot(plot_data, aes(x = Period, y = mean_Work, group = Variable, color = Variable)) +
+  geom_line() +
+  geom_point(size = 2) +
+  geom_errorbar(aes(ymin = mean_Work - sem_Work, ymax = mean_Work + sem_Work), width = 0.2) +
+  theme_minimal() +
+  labs(x = "Period", y = "Mean Work (J)", title = "Joint Work Across Periods") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
